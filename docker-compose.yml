@@ -1,0 +1,30 @@
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - CONTAINERS=1
+      - IMAGES=1
+      - NETWORKS=1
+      - VOLUMES=1
+      - INFO=1
+      - VERSION=1
+      - EXEC=1
+    networks:
+      - sparkdb-network
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.docker-api.rule=Host(`docker.sparkdb.pro`)"
+      - "traefik.http.routers.docker-api.entrypoints=websecure"
+      - "traefik.http.routers.docker-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.docker-api.service=docker-api-svc"
+      - "traefik.http.services.docker-api-svc.loadbalancer.server.port=2375"
+      - "traefik.http.routers.docker-api.middlewares=docker-basic-auth"
+      - "traefik.http.middlewares.docker-basic-auth.basicauth.users=haki:$$2y$$05$$tMCafCHZmh2WDGcOvpULw.mnD83arZ48F8se89WiV6achNhYTzNWG"
+    restart: unless-stopped
+
+networks:
+  sparkdb-network:
+    driver: bridge
