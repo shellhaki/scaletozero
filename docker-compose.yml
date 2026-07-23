@@ -1,30 +1,126 @@
 services:
+  # ---------------------------------------------------------------------------
+  # Edge router. Terminates TLS for the control plane and forwards raw TCP for
+  # each database engine.
+  #
+  # Plaintext Postgres carries no SNI, so TCP routing is by PORT, not hostname:
+  # postgres.sparkdb.pro and api.sparkdb.pro resolve to this same host, and the
+  # port selects the engine. Which specific database a connection reaches is
+  # decided by sparkdb, from the database name in the client's startup packet.
+  # ---------------------------------------------------------------------------
+  traefik:
+    image: traefik:v3.1
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--providers.docker.network=sparkdb-network"
+      # Control plane.
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.websecure.address=:443"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      # Data plane: one TCP entrypoint per engine, on its standard port.
+      # Adding MySQL later means adding :3306 here and a matching router.
+      - "--entrypoints.postgres.address=:5432"
+      - "--certificatesresolvers.letsencrypt.acme.tlschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL:?set ACME_EMAIL in .env}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "5432:5432"
+    volumes:
+      # Read-only, and only Traefik gets it — sparkdb goes through the
+      # socket proxy instead.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - traefik-certs:/letsencrypt
+    networks:
+      - sparkdb-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Docker socket proxy: the bouncer. Exposes only the API surface sparkdb
+  # needs. Reachable ONLY on the internal network — it is deliberately not
+  # published and has no Traefik router, so the Docker API is never exposed to
+  # the internet.
+  # ---------------------------------------------------------------------------
   docker-proxy:
     image: tecnativa/docker-socket-proxy:latest
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       - DOCKER_HOST=unix:///var/run/docker.sock
+      # Needed to provision, wake and reap database containers.
       - CONTAINERS=1
       - IMAGES=1
       - NETWORKS=1
       - VOLUMES=1
       - INFO=1
       - VERSION=1
-      - EXEC=1
+      # Write access to the container lifecycle (start/stop/create/remove).
+      - POST=1
+      # Everything else stays off.
+      - EXEC=0
+      - AUTH=0
+      - SECRETS=0
+      - SWARM=0
+      - SYSTEM=0
+    networks:
+      - sparkdb-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # sparkdb: control plane (HTTP) + data plane (TCP proxy) in one process.
+  # ---------------------------------------------------------------------------
+  sparkdb:
+    build:
+      context: ./server
+    depends_on:
+      - docker-proxy
+    environment:
+      # Internal address of the socket proxy: no credentials needed because it
+      # is not publicly reachable.
+      - DOCKER_API_URL=http://docker-proxy:2375
+      - DOCKER_NETWORK=sparkdb-network
+      - PORT=:8080
+      - PG_LISTEN_ADDR=:5432
+      - SQLITE_PATH=/data/sparkdb.db
+      # Scale to zero after this much idle time.
+      - IDLE_TIMEOUT=${IDLE_TIMEOUT:-2m}
+      - REAP_INTERVAL=${REAP_INTERVAL:-15s}
+      - WAKE_TIMEOUT=${WAKE_TIMEOUT:-60s}
+    volumes:
+      # Database metadata must survive restarts: the manager hydrates from it.
+      - sparkdb-state:/data
     networks:
       - sparkdb-network
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.docker-api.rule=Host(`docker.sparkdb.pro`)"
-      - "traefik.http.routers.docker-api.entrypoints=websecure"
-      - "traefik.http.routers.docker-api.tls.certresolver=letsencrypt"
-      - "traefik.http.routers.docker-api.service=docker-api-svc"
-      - "traefik.http.services.docker-api-svc.loadbalancer.server.port=2375"
-      - "traefik.http.routers.docker-api.middlewares=docker-basic-auth"
-      - "traefik.http.middlewares.docker-basic-auth.basicauth.users=haki:$$2y$$05$$tMCafCHZmh2WDGcOvpULw.mnD83arZ48F8se89WiV6achNhYTzNWG"
+      - "traefik.docker.network=sparkdb-network"
+
+      # --- Control plane: HTTPS, by domain, behind basic auth ---
+      - "traefik.http.routers.sparkdb-api.rule=Host(`api.sparkdb.pro`)"
+      - "traefik.http.routers.sparkdb-api.entrypoints=websecure"
+      - "traefik.http.routers.sparkdb-api.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.sparkdb-api.service=sparkdb-api-svc"
+      - "traefik.http.services.sparkdb-api-svc.loadbalancer.server.port=8080"
+      - "traefik.http.routers.sparkdb-api.middlewares=sparkdb-auth"
+      - "traefik.http.middlewares.sparkdb-auth.basicauth.users=${API_BASIC_AUTH:?set API_BASIC_AUTH in .env}"
+
+      # --- Data plane: raw TCP on :5432 ---
+      # HostSNI(`*`) is the only match plaintext TCP allows. The database is
+      # selected by sparkdb from the connection's startup packet.
+      - "traefik.tcp.routers.sparkdb-postgres.rule=HostSNI(`*`)"
+      - "traefik.tcp.routers.sparkdb-postgres.entrypoints=postgres"
+      - "traefik.tcp.routers.sparkdb-postgres.service=sparkdb-postgres-svc"
+      - "traefik.tcp.services.sparkdb-postgres-svc.loadbalancer.server.port=5432"
     restart: unless-stopped
 
 networks:
   sparkdb-network:
+    name: sparkdb-network
     driver: bridge
+
+volumes:
+  traefik-certs:
+  sparkdb-state:
