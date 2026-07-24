@@ -87,6 +87,10 @@ func newFakeDocker(t *testing.T) (*docker.Client, *fakeDocker) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := r.URL.Path
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(path, "/networks/"):
+			// The shared network already exists in tests.
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"Name":"sparkdb-network"}`))
 		case strings.HasSuffix(path, "/volumes/create"):
 			fd.count("volume_create")
 			w.WriteHeader(http.StatusCreated)

@@ -1,0 +1,44 @@
+### Lifecycle control
+# All lifecycle calls take only {"name": ...}. Run against a database that
+# already exists (see 02-provision.http). Each returns 200.
+#
+# Status transitions:
+#   create -> stopped
+#   start  -> running
+#   pause  -> paused
+#   stop   -> stopped
+#   delete -> gone (container + VOLUME destroyed)
+
+@host = {{host}}
+
+### Start — wake the database now (admin action; a client connecting does the same)
+POST {{host}}/api/{{engine}}/start
+Content-Type: application/json
+
+{ "name": "{{dbName}}" }
+
+### Verify it is running
+GET {{host}}/api/databases
+Accept: application/json
+
+### Pause — freeze processes via the Docker freezer
+POST {{host}}/api/{{engine}}/pause
+Content-Type: application/json
+
+{ "name": "{{dbName}}" }
+
+### Stop — scale to zero now, without waiting for the idle timeout
+POST {{host}}/api/{{engine}}/stop
+Content-Type: application/json
+
+{ "name": "{{dbName}}" }
+
+### Delete — DESTRUCTIVE: removes container AND volume. Data is gone.
+POST {{host}}/api/{{engine}}/delete
+Content-Type: application/json
+
+{ "name": "{{dbName}}" }
+
+### Confirm it is gone from the listing
+GET {{host}}/api/databases
+Accept: application/json

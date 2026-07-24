@@ -89,6 +89,28 @@ func (c *Client) do(ctx context.Context, method, path string, body any, okStatus
 	return respBody, fmt.Errorf("docker API %s %s: unexpected status %s: %s", method, path, resp.Status, respBody)
 }
 
+// EnsureNetwork creates the named bridge network if it does not already
+// exist. Provisioned containers join this network, so it must be present
+// before the first database is created; compose normally creates it, but
+// ensuring it here makes the app work against a bare Docker host too.
+func (c *Client) EnsureNetwork(ctx context.Context, name string) error {
+	_, err := c.do(ctx, http.MethodGet, "/networks/"+url.PathEscape(name), nil, http.StatusOK)
+	if err == nil {
+		return nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return err
+	}
+	payload := NetworkPayload{
+		Name:   name,
+		Driver: "bridge",
+		Labels: map[string]string{"sparkdb.managed": "true"},
+	}
+	// 201 created, or 409 if a concurrent caller won the race.
+	_, err = c.do(ctx, http.MethodPost, "/networks/create", payload, http.StatusCreated, http.StatusConflict)
+	return err
+}
+
 // CreateVolume creates a named volume. Docker returns 201 on create and is
 // idempotent for an existing name.
 func (c *Client) CreateVolume(ctx context.Context, name string, labels map[string]string) error {

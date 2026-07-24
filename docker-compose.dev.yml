@@ -1,0 +1,65 @@
+# Local development stack. No Traefik, no TLS, no domain.
+#
+# sparkdb runs INSIDE sparkdb-network, so it reaches database containers by
+# name (sparkdb-postgres-mydb:5432) — the same path production uses, but with
+# 8080 and 5432 published to your host so you can hit them from Windows/WSL.
+#
+#   docker compose -f docker-compose.dev.yml up -d --build
+#
+# Admin API: http://localhost:8080
+# Postgres:  psql postgres://user:pw@localhost:5432/dbname
+
+services:
+  docker-proxy:
+    image: tecnativa/docker-socket-proxy:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      - DOCKER_HOST=unix:///var/run/docker.sock
+      - CONTAINERS=1
+      - IMAGES=1
+      - NETWORKS=1
+      - VOLUMES=1
+      - INFO=1
+      - VERSION=1
+      - POST=1
+      - EXEC=0
+      - AUTH=0
+      - SECRETS=0
+      - SWARM=0
+      - SYSTEM=0
+    networks:
+      - sparkdb-network
+    restart: unless-stopped
+
+  sparkdb:
+    build:
+      context: ./server
+    depends_on:
+      - docker-proxy
+    environment:
+      - DOCKER_API_URL=http://docker-proxy:2375
+      - DOCKER_NETWORK=sparkdb-network
+      - PORT=:8080
+      - PG_LISTEN_ADDR=:5432
+      - SQLITE_PATH=/data/sparkdb.db
+      # Short idle so scale-to-zero is easy to watch during dev.
+      - IDLE_TIMEOUT=${IDLE_TIMEOUT:-30s}
+      - REAP_INTERVAL=${REAP_INTERVAL:-5s}
+      - WAKE_TIMEOUT=${WAKE_TIMEOUT:-60s}
+    ports:
+      - "8080:8080"
+      - "5432:5432"
+    volumes:
+      - sparkdb-state:/data
+    networks:
+      - sparkdb-network
+    restart: unless-stopped
+
+networks:
+  sparkdb-network:
+    name: sparkdb-network
+    driver: bridge
+
+volumes:
+  sparkdb-state:

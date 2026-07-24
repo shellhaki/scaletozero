@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -126,6 +127,59 @@ func TestRequestsCarryBasicAuth(t *testing.T) {
 	}
 	if got.agent != userAgent {
 		t.Errorf("User-Agent = %q, want %q", got.agent, userAgent)
+	}
+}
+
+func TestEnsureNetworkSkipsCreateWhenPresent(t *testing.T) {
+	// An existing network must not be recreated.
+	var createCalled bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/networks/create") {
+			createCalled = true
+			w.WriteHeader(http.StatusCreated)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(`{"Name":"sparkdb-network"}`))
+	}))
+	defer srv.Close()
+
+	client := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	if err := client.EnsureNetwork(context.Background(), "sparkdb-network"); err != nil {
+		t.Fatalf("EnsureNetwork: %v", err)
+	}
+	if createCalled {
+		t.Error("network already exists; create must not be called")
+	}
+}
+
+func TestEnsureNetworkCreatesWhenMissing(t *testing.T) {
+	var gotCreate NetworkPayload
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet:
+			w.WriteHeader(http.StatusNotFound)
+			w.Write([]byte(`{"message":"network not found"}`))
+		case strings.HasSuffix(r.URL.Path, "/networks/create"):
+			body, _ := io.ReadAll(r.Body)
+			json.Unmarshal(body, &gotCreate)
+			w.WriteHeader(http.StatusCreated)
+			w.Write([]byte(`{"Id":"net-abc"}`))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	}))
+	defer srv.Close()
+
+	client := &Client{BaseURL: srv.URL, HTTP: srv.Client()}
+	if err := client.EnsureNetwork(context.Background(), "sparkdb-network"); err != nil {
+		t.Fatalf("EnsureNetwork: %v", err)
+	}
+	if gotCreate.Name != "sparkdb-network" {
+		t.Errorf("created network name = %q, want sparkdb-network", gotCreate.Name)
+	}
+	if gotCreate.Driver != "bridge" {
+		t.Errorf("driver = %q, want bridge", gotCreate.Driver)
 	}
 }
 

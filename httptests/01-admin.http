@@ -1,0 +1,25 @@
+### Admin / discovery endpoints
+# Vars come from http-client.env.json (pick the "local" or "prod" env in your
+# REST client). Inline defaults below keep the file runnable with no env set.
+
+@host = {{host}}
+
+### Root — advertises the api and which engines are registered
+GET {{host}}/
+Accept: application/json
+
+### Health — liveness probe
+GET {{host}}/health
+Accept: application/json
+
+### List every database across all engines
+GET {{host}}/api/databases
+Accept: application/json
+
+### List databases for one engine only
+GET {{host}}/api/postgres/list
+Accept: application/json
+
+### List for an engine with none provisioned (empty array, still 200)
+GET {{host}}/api/mysql/list
+Accept: application/json

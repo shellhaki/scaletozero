@@ -1,0 +1,31 @@
+### Provisioning
+# Create is the only endpoint that takes credentials. It creates the volume +
+# container, runs an eager init boot, then leaves the database scaled to zero.
+# Expect 201 with status "stopped".
+
+@host = {{host}}
+
+### Create a database
+# @name create
+POST {{host}}/api/{{engine}}/create
+Content-Type: application/json
+
+{
+  "name": "{{dbName}}",
+  "username": "{{dbUser}}",
+  "password": "{{dbPassword}}"
+}
+
+### Create a second database (to test listing / isolation)
+POST {{host}}/api/{{engine}}/create
+Content-Type: application/json
+
+{
+  "name": "analytics",
+  "username": "haki",
+  "password": "hunter2"
+}
+
+### Confirm it landed and is scaled to zero
+GET {{host}}/api/databases
+Accept: application/json

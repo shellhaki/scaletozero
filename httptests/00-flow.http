@@ -1,0 +1,54 @@
+### End-to-end scale-to-zero walkthrough
+# Run these top to bottom against the dev stack:
+#   docker compose -f docker-compose.dev.yml up -d --build
+#
+# The actual database connection is TCP (psql), not HTTP, so it cannot live in
+# this file — the shell step is noted inline where it belongs.
+
+@host = {{host}}
+
+### 1. Provision. Comes back status "stopped": volume made, compute off.
+POST {{host}}/api/{{engine}}/create
+Content-Type: application/json
+
+{
+  "name": "{{dbName}}",
+  "username": "{{dbUser}}",
+  "password": "{{dbPassword}}"
+}
+
+### 2. Confirm it is scaled to zero (status: stopped)
+GET {{host}}/api/databases
+Accept: application/json
+
+# ---------------------------------------------------------------------------
+# 3. Connect with psql. THIS is what wakes the compute. Run in a shell:
+#
+#    psql postgres://haki:hunter2@localhost:5432/mydb -c 'select 1;'
+#
+#    First connect pays the wake cost, then serves. Re-check status below and
+#    it will read "running".
+# ---------------------------------------------------------------------------
+
+### 4. After connecting, status is now running
+GET {{host}}/api/databases
+Accept: application/json
+
+# ---------------------------------------------------------------------------
+# 5. Wait out IDLE_TIMEOUT (30s in the dev stack) with no connection, then
+#    re-check. The reaper scales it back to "stopped". Watch the container
+#    disappear in a shell:
+#
+#    docker ps        # sparkdb-postgres-mydb vanishes after ~30s idle
+#    docker volume ls | grep sparkdb   # the volume survives
+# ---------------------------------------------------------------------------
+
+### 6. Back to stopped after idle
+GET {{host}}/api/databases
+Accept: application/json
+
+### 7. Clean up (DESTRUCTIVE: drops the volume too)
+POST {{host}}/api/{{engine}}/delete
+Content-Type: application/json
+
+{ "name": "{{dbName}}" }

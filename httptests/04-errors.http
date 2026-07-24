@@ -1,0 +1,46 @@
+### Error cases — proving the API rejects bad input cleanly
+
+@host = {{host}}
+
+### Missing required fields -> 400
+POST {{host}}/api/{{engine}}/create
+Content-Type: application/json
+
+{ "name": "nocreds" }
+
+### Malformed JSON -> 400
+POST {{host}}/api/{{engine}}/create
+Content-Type: application/json
+
+{ not valid json
+
+### Invalid database name (must be [a-zA-Z][a-zA-Z0-9_-]{0,62}) -> 400
+POST {{host}}/api/{{engine}}/create
+Content-Type: application/json
+
+{ "name": "bad name;drop", "username": "u", "password": "p" }
+
+### Unknown engine -> 400
+POST {{host}}/api/cassandra/create
+Content-Type: application/json
+
+{ "name": "mydb", "username": "u", "password": "p" }
+
+### Duplicate name -> 409
+# Run 02-provision.http first so {{dbName}} already exists.
+POST {{host}}/api/{{engine}}/create
+Content-Type: application/json
+
+{ "name": "{{dbName}}", "username": "u", "password": "p" }
+
+### Lifecycle on a non-existent database -> 404
+POST {{host}}/api/{{engine}}/start
+Content-Type: application/json
+
+{ "name": "ghost" }
+
+### Lifecycle with no name -> 400
+POST {{host}}/api/{{engine}}/stop
+Content-Type: application/json
+
+{}

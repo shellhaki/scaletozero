@@ -43,6 +43,9 @@ func newTestAPI(t *testing.T) *gin.Engine {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/networks/"):
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(`{"Name":"sparkdb-network"}`))
 		case strings.HasSuffix(r.URL.Path, "/containers/create"):
 			w.WriteHeader(http.StatusCreated)
 			json.NewEncoder(w).Encode(map[string]string{"Id": "container-abc"})

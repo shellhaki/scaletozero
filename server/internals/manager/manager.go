@@ -70,6 +70,12 @@ type Manager struct {
 	// nowFunc and addrFunc are seams for tests; both are set by New.
 	nowFunc  func() time.Time
 	addrFunc func(store.Database) (string, error)
+
+	// networkMu guards networkReady, which records that the shared Docker
+	// network has been confirmed to exist. A failed check is not cached, so a
+	// transient Docker error is retried on the next Create.
+	networkMu    sync.Mutex
+	networkReady bool
 }
 
 // New builds a Manager and hydrates in-memory state from the store.
@@ -138,6 +144,21 @@ func (m *Manager) SetBackendAddrFunc(fn func(store.Database) (string, error)) {
 	m.addrFunc = fn
 }
 
+// ensureNetwork confirms the shared Docker network exists, creating it once.
+// The result is cached only on success so a transient failure is retried.
+func (m *Manager) ensureNetwork(ctx context.Context) error {
+	m.networkMu.Lock()
+	defer m.networkMu.Unlock()
+	if m.networkReady {
+		return nil
+	}
+	if err := m.docker.EnsureNetwork(ctx, m.cfg.DOCKER_NETWORK); err != nil {
+		return err
+	}
+	m.networkReady = true
+	return nil
+}
+
 // Create provisions a database: named volume, container bound to it, an eager
 // first boot so the data directory is initialised, then scale to zero.
 func (m *Manager) Create(ctx context.Context, engineName, name, username, password string) (*store.Database, error) {
@@ -147,6 +168,10 @@ func (m *Manager) Create(ctx context.Context, engineName, name, username, passwo
 	eng, ok := m.engines.Get(engineName)
 	if !ok {
 		return nil, fmt.Errorf("%w: %s", ErrUnknownEngine, engineName)
+	}
+
+	if err := m.ensureNetwork(ctx); err != nil {
+		return nil, fmt.Errorf("ensure docker network %q: %w", m.cfg.DOCKER_NETWORK, err)
 	}
 
 	rec := store.Database{

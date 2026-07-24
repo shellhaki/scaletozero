@@ -41,6 +41,13 @@ type CreateContainerResponse struct {
 	Warnings []string `json:"Warnings"`
 }
 
+// NetworkPayload is the body of POST /networks/create.
+type NetworkPayload struct {
+	Name   string            `json:"Name"`
+	Driver string            `json:"Driver,omitempty"`
+	Labels map[string]string `json:"Labels,omitempty"`
+}
+
 // VolumePayload is the body of POST /volumes/create.
 type VolumePayload struct {
 	Name   string            `json:"Name"`
